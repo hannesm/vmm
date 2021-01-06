@@ -103,7 +103,12 @@ let use_blocks t name vm active =
   match vm.Unikernel.config.Unikernel.block_devices with
   | [] -> t
   | blocks ->
-    let block_names = List.map (fun (bd, _) -> Name.block_name name bd) blocks in
+    let block_names =
+      List.map (fun (bd, dev) ->
+          let bd = match dev with None -> bd | Some b -> b in
+          Name.block_name name bd)
+        blocks
+    in
     List.fold_left (fun t' n -> set_block_usage t' n active) t block_names
 
 let remove_vm t name = match find_vm t name with
