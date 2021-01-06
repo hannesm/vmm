@@ -310,7 +310,10 @@ let exec name (config : Unikernel.config) bridge_taps blocks digest =
            "--net:" ^ bridge ^ "=" ^ tap,
            "--net-mac:" ^ bridge ^ "=" ^ Macaddr.to_string mac)
           bridge_taps)
-  and blocks = List.map (fun (name, dev) -> "--disk:" ^ name ^ "=" ^ Fpath.to_string (block_file dev)) blocks
+  and blocks =
+    List.map (fun (name, dev) ->
+        "--block:" ^ name ^ "=" ^ Fpath.to_string (block_file dev))
+      blocks
   and argv = match config.Unikernel.argv with None -> [] | Some xs -> xs
   and mem = "--mem=" ^ string_of_int config.Unikernel.memory
   in
@@ -374,23 +377,26 @@ let mb_of_bytes size =
 
 let find_block_devices () =
   let blockdir = Fpath.(!dbdir / block_sub) in
-  Bos.OS.Dir.contents ~rel:true blockdir >>= fun files ->
-  List.fold_left (fun acc file ->
-      acc >>= fun acc ->
-      let path = Fpath.append blockdir file in
-      Bos.OS.File.exists path >>= function
-      | false ->
-        Logs.warn (fun m -> m "file %a doesn't exist, but was listed" Fpath.pp path) ;
-        Ok acc
-      | true ->
-        Bos.OS.Path.stat path >>= fun stats ->
-        match mb_of_bytes stats.Unix.st_size, Name.of_string (Fpath.to_string file) with
-        | Error (`Msg msg), _ ->
-          Logs.warn (fun m -> m "file %a size error: %s" Fpath.pp path msg) ;
+  Bos.OS.Path.exists blockdir >>= function
+  | false -> Bos.OS.Dir.create blockdir >>| fun _ -> []
+  | true ->
+    Bos.OS.Dir.contents ~rel:true blockdir >>= fun files ->
+    List.fold_left (fun acc file ->
+        acc >>= fun acc ->
+        let path = Fpath.append blockdir file in
+        Bos.OS.File.exists path >>= function
+        | false ->
+          Logs.warn (fun m -> m "file %a doesn't exist, but was listed" Fpath.pp path) ;
           Ok acc
-        | _, Error (`Msg msg) ->
-          Logs.warn (fun m -> m "file %a name error: %s" Fpath.pp path msg) ;
-          Ok acc
-        | Ok size, Ok id ->
-          Ok ((id, size) :: acc))
-    (Ok []) files
+        | true ->
+          Bos.OS.Path.stat path >>= fun stats ->
+          match mb_of_bytes stats.Unix.st_size, Name.of_string (Fpath.to_string file) with
+          | Error (`Msg msg), _ ->
+            Logs.warn (fun m -> m "file %a size error: %s" Fpath.pp path msg) ;
+            Ok acc
+          | _, Error (`Msg msg) ->
+            Logs.warn (fun m -> m "file %a name error: %s" Fpath.pp path msg) ;
+            Ok acc
+          | Ok size, Ok id ->
+            Ok ((id, size) :: acc))
+      (Ok []) files
